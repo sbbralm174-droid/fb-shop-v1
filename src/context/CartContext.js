@@ -11,55 +11,28 @@ export const CartProvider = ({ children }) => {
   const isInitialLoad = useRef(true);
 
   const saveCartToDb = async (userId, cartItems) => {
-    if (!userId) {
-      console.error("Cannot save cart: User ID is missing.");
-      return;
-    }
-
-    if (isInitialLoad.current && cartItems.length === 0) {
-      console.log("Initial load, not saving empty cart to DB.");
-      return;
-    }
+    if (!userId) return;
+    if (isInitialLoad.current && cartItems.length === 0) return;
 
     try {
-      console.log(`Saving cart to DB for user ${userId}, items count: ${cartItems.length}`);
-      const response = await fetch('/api/cart', {
+      await fetch('/api/cart', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, items: cartItems }),
       });
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(`Failed to save cart to database: ${errorData.error || 'Unknown error'}`);
-      }
-      console.log('Cart saved to database successfully.');
     } catch (error) {
       console.error('Error saving cart:', error);
     }
   };
 
   const fetchCartFromDb = async (userId) => {
-    if (!userId) {
-      console.error("Cannot fetch cart: User ID is missing.");
-      return;
-    }
-
+    if (!userId) return;
     try {
-      console.log(`Attempting to fetch cart for user ID: ${userId}`);
-      const response = await fetch(`/api/cart?userId=${userId}`, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(`Failed to fetch cart from database: ${errorData.error || 'Unknown error'}`);
-      }
+      const response = await fetch(`/api/cart?userId=${userId}`);
       const data = await response.json();
       if (data.success && data.data && data.data.items) {
-        console.log("Cart fetched from DB:", data.data.items);
         setCart(data.data.items);
       } else {
-        console.log("No cart found for user, setting empty cart.");
         setCart([]);
       }
     } catch (error) {
@@ -72,10 +45,8 @@ export const CartProvider = ({ children }) => {
   useEffect(() => {
     if (!userLoading) {
       if (user) {
-        console.log("User logged in. Fetching cart from DB.");
         fetchCartFromDb(user.uid);
       } else {
-        console.log("User logged out. Clearing cart.");
         setCart([]);
         isInitialLoad.current = true;
       }
@@ -91,56 +62,71 @@ export const CartProvider = ({ children }) => {
     }
   }, [cart, user, userLoading]);
 
-  const addToCart = (productToAdd) => {
-    setCart((currentCart) => {
-      // FIX: Add a check to ensure item.productId, item.color, and item.size exist before trying to access them.
-      // This prevents the "Cannot read properties of undefined" error.
+  // ✅ এখন PUT ব্যবহার হবে item update করার জন্য
+  const addItemToDb = async (userId, itemToSave) => {
+    if (!userId) return;
+    try {
+      await fetch('/api/cart', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, item: itemToSave }),
+      });
+      console.log(`Product ${itemToSave.productId} updated in DB.`);
+    } catch (error) {
+      console.error('Error adding/updating item in DB:', error);
+    }
+  };
+
+  const addToCart = async (productToAdd) => {
+    if (!user) return;
+
+    try {
+      // cart fetch
+      const cartResponse = await fetch(`/api/cart?userId=${user.uid}`);
+      const cartData = await cartResponse.json();
+      const currentCart = cartData.success ? cartData.data.items : [];
+
+      // existing item আছে কিনা চেক
       const existingItem = currentCart.find(
         (item) =>
-          item.productId && item.productId.toString() === productToAdd._id.toString() &&
-          item.color && item.color.name === productToAdd.color.name &&
-          item.size && item.size.size === productToAdd.size.size
+          item.productId?.toString() === productToAdd._id.toString() &&
+          item.color?.name === productToAdd.color.name &&
+          item.size?.size === productToAdd.size.size
       );
 
+      let newQuantity = 1;
       if (existingItem) {
-        // If the product exists, create a new array with the quantity incremented by 1
-        return currentCart.map((item) =>
-          item === existingItem
-            ? { ...item, quantity: item.quantity + 1 }
-            : item
-        );
-      } else {
-        // If the product is new, add it to the cart with quantity 1
-        return [...currentCart, { ...productToAdd, productId: productToAdd._id, quantity: 1 }];
+        newQuantity = existingItem.quantity + 1;
       }
-    });
+
+      // save to DB
+      const itemToSave = { ...productToAdd, productId: productToAdd._id, quantity: newQuantity };
+      await addItemToDb(user.uid, itemToSave);
+
+      // re-fetch updated cart
+      await fetchCartFromDb(user.uid);
+    } catch (error) {
+      console.error('Error in addToCart:', error);
+    }
   };
 
   const removeFromCart = (productId) => {
-    setCart((currentCart) => currentCart.filter((item) => item.productId && item.productId.toString() !== productId));
+    setCart((currentCart) => currentCart.filter((item) => item.productId?.toString() !== productId));
   };
 
   const updateQuantity = (productToUpdate, newQuantity) => {
     if (newQuantity <= 0) {
-      // NOTE: The uniqueId from CartPage is passed, which is a string like "id-color-size".
-      // The removeFromCart function expects a simple product ID.
-      // You may need to adjust this logic if you want to remove an item based on its uniqueId.
-      // For now, it's just passing the whole uniqueId string, which won't match a simple productId.
-      // Consider passing a simple productId from the CartPage component instead.
       removeFromCart(productToUpdate.productId);
     } else {
       setCart((currentCart) =>
         currentCart.map((item) => {
-          // FIX: Add a check for item properties before using them to prevent the 'undefined' error.
           if (
-            item.productId && item.productId.toString() === productToUpdate.productId.toString() &&
-            item.color && item.color.name === productToUpdate.color.name &&
-            item.size && item.size.size === productToUpdate.size.size
+            item.productId?.toString() === productToUpdate.productId.toString() &&
+            item.color?.name === productToUpdate.color.name &&
+            item.size?.size === productToUpdate.size.size
           ) {
-            // If a match is found, return a new object with the updated quantity
             return { ...item, quantity: newQuantity };
           }
-          // Otherwise, return the item unchanged
           return item;
         })
       );
@@ -149,10 +135,9 @@ export const CartProvider = ({ children }) => {
 
   const getCartTotal = () => {
     return cart.reduce((total, item) => {
-      // FIX: Add a check for item.size to prevent errors if the property is missing.
       const itemPrice = item.size?.price || 0;
       const itemQuantity = item.quantity || 0;
-      return total + (itemPrice * itemQuantity);
+      return total + itemPrice * itemQuantity;
     }, 0);
   };
 
