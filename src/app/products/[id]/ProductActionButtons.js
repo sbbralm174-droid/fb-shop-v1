@@ -39,7 +39,7 @@ export default function ProductActionButtons({ product }) {
       color: product.colors[0],
       size: product.colors[0].sizes[0]
     };
-    addToCart(defaultVariant);
+    //addToCart(defaultVariant);
     
     // Simulate a short delay before redirecting
     setTimeout(() => {
